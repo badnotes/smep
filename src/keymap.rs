@@ -9,6 +9,7 @@ use gpui_kit::{App, KeyBinding, Menu, MenuItem};
 gpui_kit::actions!(
     smep,
     [
+        ToggleSidebar,
         Open,
         Save,
         SaveAs,
@@ -40,6 +41,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new(&primary("1"), ViewSource, Some(CONTEXT)),
         KeyBinding::new(&primary("2"), ViewSplit, Some(CONTEXT)),
         KeyBinding::new(&primary("3"), ViewRendered, Some(CONTEXT)),
+        KeyBinding::new("cmd-b", ToggleSidebar, None),
     ]);
 
     if MAC {

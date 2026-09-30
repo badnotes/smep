@@ -29,12 +29,13 @@ use crate::highlight;
 use crate::insert;
 use crate::io::{self, Document};
 use crate::keymap::{
-    self, Open, Quit, Save, SaveAs, ToggleFullscreen, ToggleMenuBar, ViewRendered, ViewSource,
+    self, ToggleSidebar, Open, Quit, Save, SaveAs, ToggleFullscreen, ToggleMenuBar, ViewRendered, ViewSource,
     ViewSplit,
 };
 use crate::rendered::{RenderedEvent, RenderedView};
 use crate::settings::{Settings, ViewMode};
 use crate::theme::{self, PreviewTheme};
+use crate::file_tree::{FileTree, Row};
 
 /// How long typing has to pause before the preview re-parses.
 pub const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(80);
@@ -155,6 +156,10 @@ pub struct Smep {
     /// shortcuts bound on the root keep working.
     focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
+    // tree
+    file_tree: FileTree,
+    sidebar_visible: bool,
+    sidebar_width: f32,
 }
 
 fn preview_state(
@@ -203,6 +208,7 @@ fn top_visible_line(state: &EditorState) -> Option<usize> {
 impl Smep {
     pub fn new(
         document: Document,
+        workspace: PathBuf, 
         settings: Settings,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -302,6 +308,10 @@ impl Smep {
             focus_handle: cx.focus_handle(),
             settings,
             _subscriptions: subscriptions,
+            // tree
+            file_tree: FileTree::new(workspace),
+            sidebar_visible: true,
+            sidebar_width: 200.,
         };
         this.refresh_title(window);
         if this.settings.view_mode == ViewMode::Rendered {
@@ -758,6 +768,8 @@ impl Smep {
             }
         })
         .detach();
+        self.file_tree.reveal(&path);
+        cx.notify();
     }
 
     /// Read `path` into the buffer, or report why not.
@@ -1022,10 +1034,140 @@ impl Smep {
             .into_any_element(),
         )
     }
+    fn toggle_sidebar(
+        &mut self,
+        _: &ToggleSidebar,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.sidebar_visible = !self.sidebar_visible;
+        cx.notify();
+    }
 }
 
 impl Render for Smep {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        h_flex()
+            .size_full()
+            .on_action(cx.listener(Self::toggle_sidebar))
+            .when(self.sidebar_visible, |el| {
+                el.child(self.render_sidebar(cx))
+            })
+            .child(
+                // 右边：你原来那一整块编辑器 + 预览
+                div()
+                    .flex_1()
+                    .h_full()
+                    .overflow_hidden()
+                    .child(self.render_main(window, cx)), // ← 把原来的内容抽成这个方法
+            )
+    }
+
+    fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let rows = self.file_tree.rows();
+
+        let title = self
+            .file_tree
+            .root_path()
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| self.file_tree.root_path().display().to_string());
+
+        v_flex()
+            .id("sidebar")
+            .w(px(self.sidebar_width))
+            .h_full()
+            .flex_shrink_0()
+            .overflow_hidden()
+            .border_r_1()
+            .border_color(cx.theme().colors.border)
+            .bg(cx.theme().colors.background)
+            // 顶部条
+            .child(
+                h_flex()
+                    .h(px(28.))
+                    .flex_shrink_0()
+                    .px_2()
+                    .items_center()
+                    .justify_between()
+                    .border_b_1()
+                    .border_color(cx.theme().colors.border)
+                    .child(Label::new(title).text_sm())
+                    .child(
+                        div()
+                            .id("tree-refresh")
+                            .px_1()
+                            .cursor_pointer()
+                            .hover(|s| s.bg(cx.theme().colors.element_hover))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.file_tree.refresh();
+                                cx.notify();
+                            }))
+                            .child("⟳"),
+                    ),
+            )
+            // 行列表
+            .child(
+                v_flex()
+                    .id("file-tree-rows")
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .py_1()
+                    .children(rows.into_iter().enumerate().map(|(ix, row)| {
+                        self.render_tree_row(ix, row, cx)
+                    })),
+            )
+    }
+
+    fn render_tree_row(
+        &self,
+        ix: usize,
+        row: Row,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let path = row.path.clone();
+        let is_dir = row.is_dir;
+        let selected = self.file_tree.selected() == Some(path.as_path());
+
+        h_flex()
+            .id(("tree-row", ix))
+            .w_full()
+            .h(px(22.))
+            .flex_shrink_0()
+            .items_center()
+            .gap_1()
+            .pl(px(8. + row.depth as f32 * 12.))
+            .pr_2()
+            .rounded_sm()
+            .cursor_pointer()
+            .when(selected, |el| el.bg(cx.theme().colors.element_selected))
+            .hover(|s| s.bg(cx.theme().colors.element_hover))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if is_dir {
+                    this.file_tree.toggle(&path);
+                } else {
+                    this.file_tree.select(&path);
+                    this.open_document_at(path.clone(), window, cx);
+                }
+                cx.notify();
+            }))
+            .child(
+                div()
+                    .w(px(10.))
+                    .flex_shrink_0()
+                    .text_xs()
+                    .text_color(cx.theme().colors.text_muted)
+                    .child(if is_dir {
+                        if row.expanded { "▾" } else { "▸" }
+                    } else {
+                        ""
+                    }),
+            )
+            .child(Label::new(row.name).text_sm().truncate())
+            .into_any_element()
+    }
+
+    fn render_main(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // The editor lays out before the preview (it comes first in the
         // split), so by the preview's prepaint the editor's rows for this
         // frame are known and the preview can follow them in the same frame.

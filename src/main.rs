@@ -10,6 +10,7 @@ mod keymap;
 mod rendered;
 mod settings;
 mod theme;
+mod file_tree;
 
 use std::path::PathBuf;
 
@@ -23,15 +24,35 @@ use settings::Settings;
 
 fn main() {
     let settings = Settings::load();
-    let document = match std::env::args_os().nth(1).map(PathBuf::from) {
-        Some(path) => match Document::read(path.clone()) {
-            Ok(document) => document,
-            Err(err) => {
-                eprintln!("smep: cannot read {}: {err}", path.display());
-                std::process::exit(1);
+    // let document = match std::env::args_os().nth(1).map(PathBuf::from) {
+    //     Some(path) => match Document::read(path.clone()) {
+    //         Ok(document) => document,
+    //         Err(err) => {
+    //             eprintln!("smep: cannot read {}: {err}", path.display());
+    //             std::process::exit(1);
+    //         }
+    //     },
+    //     None => Document::empty(),
+    // };
+    let (document, workspace) = match std::env::args_os().nth(1).map(PathBuf::from) {
+        Some(path) => {
+            let workspace = path
+                .parent()
+                .map(Path::to_path_buf)
+                .or_else(|| std::env::current_dir().ok())
+                .unwrap_or_else(|| PathBuf::from("."));
+            match Document::read(path.clone()) {
+                Ok(document) => (document, workspace),
+                Err(err) => {
+                    eprintln!("smep: cannot read {}: {err}", path.display());
+                    std::process::exit(1);
+                }
             }
-        },
-        None => Document::empty(),
+        }
+        None => (
+            Document::empty(),
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        ),
     };
 
     // Files opened through the OS (a double-click in Finder, "Open with")
@@ -63,7 +84,7 @@ fn main() {
             let mut smep = None;
             let window = cx
                 .open_window(options, |window, cx| {
-                    let view = cx.new(|cx| app::Smep::new(document, settings, window, cx));
+                    let view = cx.new(|cx| app::Smep::new(document, workspace, settings, window, cx));
                     smep = Some(view.clone());
                     cx.new(|cx| Root::new(view, window, cx))
                 })
