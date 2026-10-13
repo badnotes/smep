@@ -12,6 +12,7 @@ use gpui_kit::base::input::{InputBaseState, MultiLineMode};
 use gpui_kit::base::text::TextView;
 use gpui_kit::base::{ElementExt as _, POPUP_PRIORITY};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::label::Label;
 use gpui_kit::component::input::{
     Copy, Cut, Editor, EditorState, InputEvent, Paste, Redo, Replace, RopeExt as _, Search,
     SelectAll, TextareaState, Undo,
@@ -164,7 +165,11 @@ pub struct Smep {
     // tree
     file_tree: FileTree,
     sidebar_visible: bool,
-    sidebar_width: f32,
+    sidebar_width: Pixels,
+    /// 拖动中的起始鼠标 x，None = 没在拖动
+    resize_start_x: Option<Pixels>,
+    /// 拖动开始时的宽度
+    resize_start_width: Pixels,
 }
 
 fn preview_state(
@@ -322,7 +327,9 @@ impl Smep {
             // tree
             file_tree: FileTree::new(workspace),
             sidebar_visible: true,
-            sidebar_width: 200.,
+            sidebar_width: px(260.0),
+            resize_start_x: None,
+            resize_start_width: px(0.0),
         };
         this.schedule_block_table(window, cx);
         this.refresh_title(window);
@@ -821,13 +828,13 @@ impl Smep {
     /// first. This is what a double-click in the file manager ends up in.
     pub fn open_document_at(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         let proceed = self.confirm_discard(window, cx);
+        self.file_tree.reveal(&path);
         cx.spawn_in(window, async move |this, cx| {
             if proceed.await {
                 let _ = this.update_in(cx, |this, window, cx| this.load_path(path, window, cx));
             }
         })
         .detach();
-        self.file_tree.reveal(&path);
         cx.notify();
     }
 
@@ -1283,25 +1290,6 @@ impl Smep {
         self.sidebar_visible = !self.sidebar_visible;
         cx.notify();
     }
-}
-
-impl Render for Smep {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        h_flex()
-            .size_full()
-            .on_action(cx.listener(Self::toggle_sidebar))
-            .when(self.sidebar_visible, |el| {
-                el.child(self.render_sidebar(cx))
-            })
-            .child(
-                // 右边：你原来那一整块编辑器 + 预览
-                div()
-                    .flex_1()
-                    .h_full()
-                    .overflow_hidden()
-                    .child(self.render_main(window, cx)), // ← 把原来的内容抽成这个方法
-            )
-    }
 
     fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let rows = self.file_tree.rows();
@@ -1315,36 +1303,25 @@ impl Render for Smep {
 
         v_flex()
             .id("sidebar")
-            .w(px(self.sidebar_width))
+            .w(self.sidebar_width)
             .h_full()
             .flex_shrink_0()
             .overflow_hidden()
-            .border_r_1()
-            .border_color(cx.theme().colors.border)
+            // .border_r_1()
+            // .border_color(cx.theme().colors.border)
             .bg(cx.theme().colors.background)
             // 顶部条
             .child(
                 h_flex()
-                    .h(px(28.))
+                    .h(px(34.))
                     .flex_shrink_0()
                     .px_2()
                     .items_center()
                     .justify_between()
-                    .border_b_1()
-                    .border_color(cx.theme().colors.border)
-                    .child(Label::new(title).text_sm())
-                    .child(
-                        div()
-                            .id("tree-refresh")
-                            .px_1()
-                            .cursor_pointer()
-                            .hover(|s| s.bg(cx.theme().colors.element_hover))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.file_tree.refresh();
-                                cx.notify();
-                            }))
-                            .child("⟳"),
-                    ),
+                    // .border_b_1()
+                    // .border_color(cx.theme().colors.border)
+                    // .child(Label::new("").text_sm())
+                    ,
             )
             // 行列表
             .child(
@@ -1356,6 +1333,28 @@ impl Render for Smep {
                     .children(rows.into_iter().enumerate().map(|(ix, row)| {
                         self.render_tree_row(ix, row, cx)
                     })),
+            )
+            .child(
+                h_flex()
+                    .h(px(34.))
+                    .flex_shrink_0()
+                    .px_2()
+                    .items_center()
+                    .justify_between()
+                    .border_color(cx.theme().colors.border)
+                    .child(Label::new(title).text_base())
+                    .child(
+                        div()
+                            .id("tree-refresh")
+                            .px_1()
+                            .cursor_pointer()
+                            .hover(|s| s.bg(cx.theme().colors.accent))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.file_tree.refresh();
+                                cx.notify();
+                            }))
+                            .child("⟳"),
+                    ),
             )
     }
 
@@ -1376,12 +1375,12 @@ impl Render for Smep {
             .flex_shrink_0()
             .items_center()
             .gap_1()
-            .pl(px(8. + row.depth as f32 * 12.))
+            .pl(px(8. + row.depth as f32 * 13.))
             .pr_2()
             .rounded_sm()
             .cursor_pointer()
-            .when(selected, |el| el.bg(cx.theme().colors.element_selected))
-            .hover(|s| s.bg(cx.theme().colors.element_hover))
+            .when(selected, |el| el.bg(cx.theme().colors.list_active.opacity(1.0)))
+            .text_color(cx.theme().colors.muted_foreground)
             .on_click(cx.listener(move |this, _, window, cx| {
                 if is_dir {
                     this.file_tree.toggle(&path);
@@ -1395,16 +1394,39 @@ impl Render for Smep {
                 div()
                     .w(px(10.))
                     .flex_shrink_0()
-                    .text_xs()
-                    .text_color(cx.theme().colors.text_muted)
+                    .text_lg()
+                    .text_color(cx.theme().colors.muted_foreground)
                     .child(if is_dir {
                         if row.expanded { "▾" } else { "▸" }
                     } else {
                         ""
                     }),
             )
-            .child(Label::new(row.name).text_sm().truncate())
+            .child(Label::new(row.name).text_base().truncate())
             .into_any_element()
+    }
+
+    fn render_sidebar_resizer(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let dragging = self.resize_start_x.is_some();
+        let hover_bg = cx.theme().colors.accent;      // 换成分隔条高亮色
+        let idle_bg  = cx.theme().colors.border.opacity(0.5);
+
+        div()
+            .id("sidebar-resizer")
+            .w(px(1.))                       // 视觉 4px，但下面用 hitbox 扩宽一点更好拖
+            .h_full()
+            .flex_shrink_0()
+            .cursor_col_resize()             // 左右箭头光标
+            .bg(if dragging { hover_bg } else { idle_bg })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseDownEvent, window, cx| {
+                    // 全局坐标，和 overlay 的 move 同一个参考系
+                    this.resize_start_x = Some(window.mouse_position().x);
+                    this.resize_start_width = this.sidebar_width;
+                    cx.notify();
+                }),
+            )
     }
 
     fn render_main(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1519,6 +1541,54 @@ impl Render for Smep {
     }
 }
 
+impl Render for Smep {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        h_flex()
+            .relative()
+            .size_full()
+            .on_action(cx.listener(Self::toggle_sidebar))
+            .when(self.sidebar_visible, |el| {
+                // 左边：侧边栏 + 侧边栏调整器
+                el.child(self.render_sidebar(cx))
+                  .child(self.render_sidebar_resizer(cx))
+            })
+            .child(
+                // 右边：你原来那一整块编辑器 + 预览
+                div()
+                    .flex_1()
+                    .h_full()
+                    .overflow_hidden()
+                    .child(self.render_main(window, cx)), // render_main 是你原来那一整块编辑器 + 预览
+            )
+            // ↓ 拖动中才出现的 overlay
+            .when(self.resize_start_x.is_some(), |el| {
+                el.child(
+                    div()
+                        .id("resize-overlay")
+                        .absolute()
+                        .inset_0()
+                        .cursor_col_resize()
+                        .on_mouse_move(cx.listener(|this, _: &MouseMoveEvent, window, cx| {
+                            if let Some(start) = this.resize_start_x {
+                                // 用全局坐标，绝对统一
+                                let delta = window.mouse_position().x - start;
+                                this.sidebar_width =
+                                    (this.resize_start_width + delta).clamp(px(120.), px(600.));
+                                cx.notify();
+                            }
+                        }))
+                        .on_mouse_up(
+                            MouseButton::Left,
+                            cx.listener(|this, _: &MouseUpEvent, _window, cx| {
+                                this.resize_start_x = None;
+                                cx.notify();
+                            }),
+                        ),
+                )
+            })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     // Not `use gpui_kit::*`: with `test-support` on, the glob would also pull
@@ -1570,19 +1640,20 @@ mod tests {
         cx: &mut TestAppContext,
         document: Document,
     ) -> (Entity<Smep>, &mut VisualTestContext) {
-        open_with(cx, document, Settings::default())
+        open_with(cx, document, PathBuf::from("."), Settings::default())
     }
 
     fn open_with(
         cx: &mut TestAppContext,
         document: Document,
+        path: PathBuf,
         settings: Settings,
     ) -> (Entity<Smep>, &mut VisualTestContext) {
         cx.update(|cx| {
             gpui_kit::init(cx);
             crate::keymap::init(cx);
         });
-        cx.add_window_view(|window, cx| Smep::new(document, settings, window, cx))
+        cx.add_window_view(|window, cx| Smep::new(document, path, settings, window, cx))
     }
 
     fn mouse_down(cx: &mut VisualTestContext, button: MouseButton, x: f32, y: f32) {
@@ -1855,7 +1926,7 @@ mod tests {
             format: PreviewFormat::Markdown,
             origin: None,
         };
-        let (smep, cx) = open_with(cx, document, settings);
+        let (smep, cx) = open_with(cx, document, PathBuf::from("."), settings);
         let editor = editor(&smep, cx);
         cx.update(|window, cx| editor.update(cx, |state, cx| state.focus(window, cx)));
         draw(cx);
@@ -2727,7 +2798,7 @@ mod tests {
             format: PreviewFormat::Markdown,
             origin: None,
         };
-        let (smep, cx) = open_with(cx, document, settings);
+        let (smep, cx) = open_with(cx, document, PathBuf::from("."), settings);
         draw(cx);
         let editor = editor(&smep, cx);
         let preview_x = f32::from(cx.read(|cx| editor.read(cx).input_bounds().right())) + 60.;
