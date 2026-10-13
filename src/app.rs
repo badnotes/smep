@@ -32,8 +32,8 @@ use crate::highlight;
 use crate::insert;
 use crate::io::{self, Document};
 use crate::keymap::{
-    self, ToggleSidebar, Open, Quit, Save, SaveAs, ToggleFullscreen, ToggleMenuBar, ViewRendered, ViewSource,
-    ViewSplit,
+    self, ExportHtml, ExportPdf, Import, Open, Quit, Save, SaveAs, ToggleFullscreen, ToggleMenuBar,
+    ViewRendered, ViewSource, ViewSplit, ToggleSidebar, 
 };
 use crate::rendered::{RenderedEvent, RenderedView};
 use crate::settings::{Settings, ViewMode};

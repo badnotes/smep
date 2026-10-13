@@ -66,7 +66,7 @@ fn main() {
         Some(path) => {
             let workspace = path
                 .parent()
-                .map(Path::to_path_buf)
+                .map(PathBuf::from)
                 .or_else(|| std::env::current_dir().ok())
                 .unwrap_or_else(|| PathBuf::from("."));
             match Document::read(path.clone()) {
