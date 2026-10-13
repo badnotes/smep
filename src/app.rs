@@ -1294,7 +1294,7 @@ impl Smep {
     fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let rows = self.file_tree.rows();
 
-        let title = self
+        let folder_name = self
             .file_tree
             .root_path()
             .file_name()
@@ -1342,18 +1342,50 @@ impl Smep {
                     .items_center()
                     .justify_between()
                     .border_color(cx.theme().colors.border)
-                    .child(Label::new(title).text_base())
+                    .child(
+                        div()
+                        .id("tree-plus")
+                        .px_2()
+                        .cursor_pointer()
+                        .hover(|s| s.bg(cx.theme().colors.accent))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            let receiver = cx.prompt_for_paths(PathPromptOptions {
+                                files: false,
+                                directories: true,
+                                multiple: false,
+                                prompt: Some("打开文件夹".into()),
+                            });
+                            cx.spawn_in(window, async move |this, cx| {
+                                match receiver.await {
+                                    Ok(Ok(Some(paths))) => {
+                                        if let Some(dir) = paths.into_iter().next() {
+                                            let _ = this.update_in(cx, |this, _window, cx| {
+                                                this.file_tree.set_root(dir);
+                                                cx.notify();
+                                            });
+                                        }
+                                    }
+                                    Ok(Ok(None)) => { /* 用户什么都没选，正常返回 */ }
+                                    Ok(Err(err)) => eprintln!("smep: 选择目录失败: {err}"),
+                                    Err(_canceled) => { /* 用户取消了对话框 */ }
+                                }
+                            })
+                            .detach();
+                            cx.notify();
+                        }))
+                        .child(Label::new("+").text_base()))
+                    .child(Label::new(folder_name).text_base())
                     .child(
                         div()
                             .id("tree-refresh")
-                            .px_1()
+                            .px_2()
                             .cursor_pointer()
                             .hover(|s| s.bg(cx.theme().colors.accent))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.file_tree.refresh();
                                 cx.notify();
                             }))
-                            .child("⟳"),
+                            .child(Label::new("⟳").text_base()),
                     ),
             )
     }
@@ -1533,8 +1565,30 @@ impl Smep {
                 .on_action(cx.listener(Self::view_rendered))
                 .on_action(cx.listener(Self::toggle_menu_bar))
                 .on_action(cx.listener(Self::toggle_fullscreen))
+                // ① 第一行：标题栏（撑满宽度，固定高度）
                 .child(title_bar)
-                .child(div().flex_1().min_h_0().w_full().child(content))
+                // ② 第二行：左右分栏，占满剩余高度
+                .child(
+                    h_flex()
+                        .flex_1()          // 占剩余高度（不是 size_full）
+                        .min_h_0()         // 允许收缩，防止撑破
+                        .w_full()
+                        .relative()        // overlay 靠它定位
+                        .on_action(cx.listener(Self::toggle_sidebar))
+                        .when(self.sidebar_visible, |el| {
+                            el.child(self.render_sidebar(cx))
+                            .child(self.render_sidebar_resizer(cx))
+                        })
+                        .child(
+                            // ③ 右侧内容：占剩余宽度
+                            div()
+                                .flex_1()           // 吃掉 sidebar 之外的所有宽度
+                                .min_w_0()
+                                .h_full()
+                                .overflow_hidden()
+                                .child(content),
+                        ),
+                )
                 .children(plus)
                 .children(menu),
         )
@@ -1546,12 +1600,12 @@ impl Render for Smep {
         h_flex()
             .relative()
             .size_full()
-            .on_action(cx.listener(Self::toggle_sidebar))
-            .when(self.sidebar_visible, |el| {
-                // 左边：侧边栏 + 侧边栏调整器
-                el.child(self.render_sidebar(cx))
-                  .child(self.render_sidebar_resizer(cx))
-            })
+            // .on_action(cx.listener(Self::toggle_sidebar))
+            // .when(self.sidebar_visible, |el| {
+            //     // 左边：侧边栏 + 侧边栏调整器
+            //     el.child(self.render_sidebar(cx))
+            //       .child(self.render_sidebar_resizer(cx))
+            // })
             .child(
                 // 右边：你原来那一整块编辑器 + 预览
                 div()

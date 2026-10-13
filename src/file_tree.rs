@@ -41,6 +41,8 @@ impl Node {
         if self.children.is_some() || !self.is_dir {
             return;
         }
+        let t = std::time::Instant::now();
+        let n;
         let mut children = Vec::new();
         if let Ok(dir) = fs::read_dir(&self.path) {
             for entry in dir.flatten() {
@@ -58,6 +60,8 @@ impl Node {
                 .cmp(&a.is_dir)
                 .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
         });
+        n = children.len();
+        eprintln!("load {:?}: {} entries in {:?}", self.path, n, t.elapsed());
         self.children = Some(children);
     }
 
@@ -149,6 +153,10 @@ impl FileTree {
 
     pub fn root_path(&self) -> &Path {
         &self.root_path
+    }
+
+    pub fn set_root(&mut self, root: PathBuf) {
+        *self = Self::new(root);
     }
 
     pub fn selected(&self) -> Option<&Path> {
